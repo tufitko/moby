@@ -92,6 +92,7 @@ type LogFile struct {
 	createDecoder   MakeDecoderFn
 	getTailReader   GetTailReaderFunc
 	perms           os.FileMode
+	partialsToSameFile bool // partial logs writes to same file
 }
 
 // MakeDecoderFn creates a decoder
@@ -123,7 +124,7 @@ type SizeReaderAt interface {
 type GetTailReaderFunc func(ctx context.Context, f SizeReaderAt, nLogLines int) (rdr io.Reader, nLines int, err error)
 
 // NewLogFile creates new LogFile
-func NewLogFile(logPath string, capacity int64, maxFiles int, compress bool, marshaller logger.MarshalFunc, decodeFunc MakeDecoderFn, perms os.FileMode, getTailReader GetTailReaderFunc) (*LogFile, error) {
+func NewLogFile(logPath string, capacity int64, maxFiles int, compress bool, marshaller logger.MarshalFunc, decodeFunc MakeDecoderFn, perms os.FileMode, getTailReader GetTailReaderFunc, partialsToSameFile bool) (*LogFile, error) {
 	log, err := openFile(logPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, perms)
 	if err != nil {
 		return nil, err
@@ -146,6 +147,7 @@ func NewLogFile(logPath string, capacity int64, maxFiles int, compress bool, mar
 		createDecoder:   decodeFunc,
 		perms:           perms,
 		getTailReader:   getTailReader,
+		partialsToSameFile: partialsToSameFile,
 	}, nil
 }
 
@@ -157,6 +159,8 @@ func (w *LogFile) WriteLogEntry(msg *logger.Message) error {
 		return errors.Wrap(err, "error marshalling log message")
 	}
 
+	pLogMetaData := msg.PLogMetaData
+
 	logger.PutMessage(msg)
 
 	w.mu.Lock()
@@ -165,9 +169,12 @@ func (w *LogFile) WriteLogEntry(msg *logger.Message) error {
 		return errors.New("cannot write because the output file was closed")
 	}
 
-	if err := w.checkCapacityAndRotate(); err != nil {
-		w.mu.Unlock()
-		return errors.Wrap(err, "error rotating log file")
+	// try rotate when partialsToSameFile is false or msg is first partial
+	if !w.partialsToSameFile || pLogMetaData == nil || pLogMetaData.Ordinal == 1 {
+		if err := w.checkCapacityAndRotate(); err != nil {
+			w.mu.Unlock()
+			return errors.Wrap(err, "error rotating log file")
+		}
 	}
 
 	n, err := w.f.Write(b)

@@ -140,7 +140,7 @@ func newDriver(logPath string, cfg *CreateConfig) (logger.Logger, error) {
 		return nil, errdefs.InvalidParameter(err)
 	}
 
-	lf, err := loggerutils.NewLogFile(logPath, cfg.MaxFileSize, cfg.MaxFileCount, !cfg.DisableCompression, makeMarshaller(), decodeFunc, 0640, getTailReader)
+	lf, err := loggerutils.NewLogFile(logPath, cfg.MaxFileSize, cfg.MaxFileCount, !cfg.DisableCompression, makeMarshaller(), decodeFunc, 0640, getTailReader, false)
 	if err != nil {
 		return nil, err
 	}

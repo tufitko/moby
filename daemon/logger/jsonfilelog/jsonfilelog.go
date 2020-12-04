@@ -77,6 +77,18 @@ func New(info logger.Info) (logger.Logger, error) {
 		}
 	}
 
+	var partSameFile bool
+	if partSameFileString, ok := info.Config["partials-same-file"]; ok {
+		var err error
+		partSameFile, err = strconv.ParseBool(partSameFileString)
+		if err != nil {
+			return nil, err
+		}
+		if partSameFile && (maxFiles == 1 || capval == -1) {
+			return nil, fmt.Errorf("partials-same-file cannot be true when max-file is less than 2 or max-size is not set")
+		}
+	}
+
 	attrs, err := info.ExtraAttributes(nil)
 	if err != nil {
 		return nil, err
@@ -110,7 +122,7 @@ func New(info logger.Info) (logger.Logger, error) {
 		return b, nil
 	}
 
-	writer, err := loggerutils.NewLogFile(info.LogPath, capval, maxFiles, compress, marshalFunc, decodeFunc, 0640, getTailReader)
+	writer, err := loggerutils.NewLogFile(info.LogPath, capval, maxFiles, compress, marshalFunc, decodeFunc, 0640, getTailReader, partSameFile)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +172,7 @@ func ValidateLogOpt(cfg map[string]string) error {
 		case "env":
 		case "env-regex":
 		case "tag":
+		case "partials-same-file":
 		default:
 			return fmt.Errorf("unknown log opt '%s' for json-file log driver", key)
 		}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/docker/docker/api/types/backend"
 	"io"
 	"io/ioutil"
 	"os"
@@ -311,6 +312,54 @@ func TestCheckCapacityAndRotate(t *testing.T) {
 		assert.NilError(t, l.WriteLogEntry(&logger.Message{Line: []byte("hello world 4!")}), ls)
 		poll.WaitOn(t, checkFileExists(f.Name()+".2.gz"), poll.WithDelay(time.Millisecond), poll.WithTimeout(30*time.Second))
 	})
+}
+
+func TestCheckCapacityAndRotateWithPartialsToSameFile(t *testing.T) {
+	dir, err := ioutil.TempDir("", t.Name())
+	assert.NilError(t, err)
+	defer os.RemoveAll(dir)
+
+	f, err := ioutil.TempFile(dir, "logs")
+	assert.NilError(t, err)
+
+	l := &LogFile{
+		f:               f,
+		capacity:        5,
+		maxFiles:        3,
+		compress:        true,
+		notifyReaders:   pubsub.NewPublisher(0, 1),
+		perms:           0600,
+		filesRefCounter: refCounter{counter: make(map[string]int)},
+		getTailReader: func(ctx context.Context, r SizeReaderAt, lines int) (io.Reader, int, error) {
+			return tailfile.NewTailReader(ctx, r, lines)
+		},
+		createDecoder: func(io.Reader) Decoder {
+			return dummyDecoder{}
+		},
+		marshal: func(msg *logger.Message) ([]byte, error) {
+			return msg.Line, nil
+		},
+		partialsToSameFile: true,
+	}
+	defer l.Close()
+
+	ls := dirStringer{dir}
+
+	assert.NilError(t, l.WriteLogEntry(&logger.Message{Line: []byte("helloooo,"), PLogMetaData: &backend.PartialLogMetaData{Ordinal: 1}}))
+	assert.NilError(t, l.WriteLogEntry(&logger.Message{Line: []byte(" world!"), PLogMetaData: &backend.PartialLogMetaData{Ordinal: 2, Last: true}}))
+	_, err = os.Stat(f.Name() + ".1")
+	assert.Assert(t, os.IsNotExist(err), ls)
+
+	assert.NilError(t, l.WriteLogEntry(&logger.Message{Line: []byte("helloooo,"), PLogMetaData: &backend.PartialLogMetaData{Ordinal: 1}}))
+	poll.WaitOn(t, checkFileExists(f.Name()+".1.gz"), poll.WithDelay(time.Millisecond), poll.WithTimeout(30*time.Second))
+	assert.NilError(t, l.WriteLogEntry(&logger.Message{Line: []byte(" world!"), PLogMetaData: &backend.PartialLogMetaData{Ordinal: 2, Last: true}}))
+	poll.WaitOn(t, checkFileExists(f.Name()+".1.gz"), poll.WithDelay(time.Millisecond), poll.WithTimeout(30*time.Second))
+	_, err = os.Stat(f.Name() + ".2")
+	assert.Assert(t, os.IsNotExist(err), ls)
+
+	assert.NilError(t, l.WriteLogEntry(&logger.Message{Line: []byte("hello world!")}))
+	poll.WaitOn(t, checkFileExists(f.Name()+".1.gz"), poll.WithDelay(time.Millisecond), poll.WithTimeout(30*time.Second))
+	poll.WaitOn(t, checkFileExists(f.Name()+".2.gz"), poll.WithDelay(time.Millisecond), poll.WithTimeout(30*time.Second))
 }
 
 func waitForMsg(t *testing.T, lw *logger.LogWatcher, timeout time.Duration) {
